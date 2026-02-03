@@ -5,82 +5,57 @@
   vars_files:
     - vault.yaml
   vars:
-    adguard_dir: /adguardhome/AdGuardHome
-    backup_dir: /data/backups/adguard
-    backup_name: "adguard_backup_{{ ansible_date_time.date }}_{{ ansible_date_time.hour }}{{ ansible_date_time.minute }}"
-
+    adguard_dir: /adguardhome
+    backup_dir: /home/user/backups/adguard
+    
   tasks:
-    - name: Konfiguracja ścieżki kopii zapasowej
-      ansible.builtin.set_fact:
-        backup_path: "{{ backup_dir | default('backups') }}"
-
-    - name: Wykrywanie nazwy usługi AdGuard Home
-      ansible.builtin.shell: |
-        systemctl list-units --all --type=service --no-legend | grep -i adguard | awk '{print $1}' | head -1 | sed 's/\.service$//'
-      register: adguard_service_name
-      changed_when: false
-      failed_when: false
-      become: yes
-
-    - name: Ustawienie domyślnej nazwy usługi
-      ansible.builtin.set_fact:
-        service_name: "{{ (adguard_service_name.stdout | trim | default('AdGuardHome')) }}"
-
-    - name: Debug wykrytej nazwy usługi
-      ansible.builtin.debug:
-        msg: "Wykryta nazwa usługi: '{{ service_name }}'"
-
-    - name: Główny blok backup z obsługą wyjątków
+    - name: Główny blok wykonywania kopii zapasowej
       block:
-        - name: Przygotowanie katalogu na kopie zapasowe
+        - name: Przygotowanie lokalnego katalogu backup
           ansible.builtin.file:
-            path: "{{ backup_path }}"
+            path: "{{ backup_dir }}"
             state: directory
             mode: '0755'
           delegate_to: localhost
           become: no
 
-        - name: Zatrzymanie serwisu AdGuard Home
+        - name: Zatrzymanie AdGuard Home przed backupem
           ansible.builtin.systemd:
-            name: "{{ service_name }}"
+            name: AdGuardHome
             state: stopped
-            force: yes
-            daemon_reload: yes
-          async: 60
-          poll: 5
 
-        - name: Kompresja danych AdGuard Home
+        - name: Kompresja katalogu AdGuard Home
           community.general.archive:
             path: "{{ adguard_dir }}"
             dest: /tmp/adguard_backup_{{ ansible_date_time.date }}.tar.gz
             format: gz
 
-        - name: Wznowienie serwisu AdGuard Home
+        - name: Przywrócenie działania AdGuard Home
           ansible.builtin.systemd:
-            name: "{{ service_name }}"
+            name: AdGuardHome
             state: started
 
-        - name: Transfer kopii zapasowej do maszyny Ansible
+        - name: Transfer archiwum do maszyny kontrolnej
           ansible.builtin.fetch:
             src: /tmp/adguard_backup_{{ ansible_date_time.date }}.tar.gz
-            dest: "{{ backup_path }}/adguard_backup_{{ ansible_date_time.date }}.tar.gz"
+            dest: "{{ backup_dir }}/adguard_backup_{{ ansible_date_time.date }}.tar.gz"
             flat: yes
 
-        - name: Czyszczenie plików tymczasowych na serwerze
+        - name: Usunięcie pliku tymczasowego z hosta docelowego
           ansible.builtin.file:
             path: /tmp/adguard_backup_{{ ansible_date_time.date }}.tar.gz
             state: absent
 
-        - name: Wyszukiwanie przestarzałych kopii zapasowych (starszych niż 7 dni)
+        - name: Wyszukiwanie przestarzałych backupów
           ansible.builtin.find:
-            paths: "{{ backup_path }}"
+            paths: "{{ backup_dir }}"
             patterns: "adguard_backup_*.tar.gz"
             age: 7d
           register: old_backups
           delegate_to: localhost
           become: no
 
-        - name: Usuwanie przestarzałych kopii
+        - name: Usuwanie przestarzałych plików backup
           ansible.builtin.file:
             path: "{{ item.path }}"
             state: absent
@@ -88,52 +63,21 @@
           delegate_to: localhost
           become: no
 
-        - name: Weryfikacja rozmiaru utworzonej kopii
-          ansible.builtin.stat:
-            path: "{{ backup_path }}/adguard_backup_{{ ansible_date_time.date }}.tar.gz"
-          register: backup_stat
-          delegate_to: localhost
-          become: no
-
-        - name: Raport z wykonania kopii zapasowej
+        - name: Informacja o zakończeniu procesu
           ansible.builtin.debug:
             msg:
               - "Kopia zapasowa AdGuard Home zakończona pomyślnie"
-              - "Lokalizacja na Ansible_Dziecielski: {{ backup_path }}/adguard_backup_{{ ansible_date_time.date }}.tar.gz"
-              - "Rozmiar: {{ (backup_stat.stat.size / 1024 / 1024) | round(2) }} MB"
-
-        - name: Powiadomienie o sukcesie przez Discord
-          community.general.discord:
-            webhook_id: "{{ discord_webhook_id }}"
-            webhook_token: "{{ discord_webhook_token }}"
-            embeds:
-              - title: "✅ KOPIA ZAPASOWA ZAJEBISCIE DZIAŁA!"
-                description: "Kopia zapasowa AdGuard Home została utworzona pomyślnie i wszystko działa perfekcyjnie!"
-                color: 3066993
-                fields:
-                  - name: "Serwer"
-                    value: "{{ inventory_hostname }}"
-                  - name: "Data"
-                    value: "{{ ansible_date_time.iso8601 }}"
-                  - name: "Lokalizacja"
-                    value: "{{ backup_path }}/adguard_backup_{{ ansible_date_time.date }}.tar.gz"
-                  - name: "Rozmiar"
-                    value: "{{ (backup_stat.stat.size / 1024 / 1024) | round(2) }} MB"
-                  - name: "Status"
-                    value: "✅ Wszystko działa zajebiscie!"
-                timestamp: "{{ ansible_date_time.iso8601 }}"
-          delegate_to: localhost
-          become: no
-          when: discord_webhook_id != "" and discord_webhook_token != ""
+              - "Lokalizacja: {{ backup_dir }}/adguard_backup_{{ ansible_date_time.date }}.tar.gz"
+              - "Serwer: {{ inventory_hostname }}"
 
       rescue:
-        - name: Przywrócenie działania serwisu po błędzie
+        - name: Przywrócenie usługi w przypadku błędu
           ansible.builtin.systemd:
-            name: "{{ service_name }}"
+            name: AdGuardHome
             state: started
           ignore_errors: yes
 
-        - name: Powiadomienie o błędzie przez Discord
+        - name: Powiadomienie Discord o błędzie
           community.general.discord:
             webhook_id: "{{ discord_webhook_id }}"
             webhook_token: "{{ discord_webhook_token }}"
