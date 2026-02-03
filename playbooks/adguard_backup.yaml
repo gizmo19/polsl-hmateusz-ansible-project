@@ -102,6 +102,30 @@
               - "Lokalizacja na Ansible_Dziecielski: {{ backup_path }}/adguard_backup_{{ ansible_date_time.date }}.tar.gz"
               - "Rozmiar: {{ (backup_stat.stat.size / 1024 / 1024) | round(2) }} MB"
 
+        - name: Powiadomienie o sukcesie przez Discord
+          community.general.discord:
+            webhook_id: "{{ discord_webhook_id }}"
+            webhook_token: "{{ discord_webhook_token }}"
+            embeds:
+              - title: "✅ KOPIA ZAPASOWA ZAJEBISCIE DZIAŁA!"
+                description: "Kopia zapasowa AdGuard Home została utworzona pomyślnie i wszystko działa perfekcyjnie!"
+                color: 3066993
+                fields:
+                  - name: "Serwer"
+                    value: "{{ inventory_hostname }}"
+                  - name: "Data"
+                    value: "{{ ansible_date_time.iso8601 }}"
+                  - name: "Lokalizacja"
+                    value: "{{ backup_path }}/adguard_backup_{{ ansible_date_time.date }}.tar.gz"
+                  - name: "Rozmiar"
+                    value: "{{ (backup_stat.stat.size / 1024 / 1024) | round(2) }} MB"
+                  - name: "Status"
+                    value: "✅ Wszystko działa zajebiscie!"
+                timestamp: "{{ ansible_date_time.iso8601 }}"
+          delegate_to: localhost
+          become: no
+          when: discord_webhook_id != "" and discord_webhook_token != ""
+
       rescue:
         - name: Przywrócenie działania serwisu po błędzie
           ansible.builtin.systemd:
