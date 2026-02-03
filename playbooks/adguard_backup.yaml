@@ -2,67 +2,81 @@
 - name: Backup AdGuard Home
   hosts: agh
   become: true
-  gather_facts: true
-  ignore_unreachable: true
   vars_files:
     - vault.yaml
-  vars:
-    adguard_dir: /adguardhome
-    backup_dir: /home/user/backups/adguard
 
   tasks:
-    - name: Init statusu
+    - name: Konfiguracja ścieżki kopii zapasowej
       ansible.builtin.set_fact:
-        backup_failed: false
-        backup_error_msg: ""
+        backup_path: "{{ backup_dir | default('backups') }}"
 
-    - name: Główny blok wykonywania kopii zapasowej
+    - name: Wykrywanie nazwy usługi AdGuard Home
+      ansible.builtin.shell: |
+        systemctl list-units --all --type=service --no-legend | grep -i adguard | awk '{print $1}' | head -1 | sed 's/\.service$//'
+      register: adguard_service_name
+      changed_when: false
+      failed_when: false
+      become: yes
+
+    - name: Ustawienie domyślnej nazwy usługi
+      ansible.builtin.set_fact:
+        service_name: "{{ (adguard_service_name.stdout | trim | default('AdGuardHome')) }}"
+
+    - name: Debug wykrytej nazwy usługi
+      ansible.builtin.debug:
+        msg: "Wykryta nazwa usługi: '{{ service_name }}'"
+
+    - name: Główny blok backup z obsługą wyjątków
       block:
-        - name: Przygotowanie lokalnego katalogu backup
+        - name: Przygotowanie katalogu na kopie zapasowe
           ansible.builtin.file:
-            path: "{{ backup_dir }}"
+            path: "{{ backup_path }}"
             state: directory
             mode: '0755'
           delegate_to: localhost
           become: no
 
-        - name: Zatrzymanie AdGuard Home przed backupem
+        - name: Zatrzymanie serwisu AdGuard Home
           ansible.builtin.systemd:
-            name: AdGuardHome
+            name: "{{ service_name }}"
             state: stopped
+            force: yes
+            daemon_reload: yes
+          async: 60
+          poll: 5
 
-        - name: Kompresja katalogu AdGuard Home
+        - name: Kompresja danych AdGuard Home
           community.general.archive:
             path: "{{ adguard_dir }}"
             dest: /tmp/adguard_backup_{{ ansible_date_time.date }}.tar.gz
             format: gz
 
-        - name: Przywrócenie działania AdGuard Home
+        - name: Wznowienie serwisu AdGuard Home
           ansible.builtin.systemd:
-            name: AdGuardHome
+            name: "{{ service_name }}"
             state: started
 
-        - name: Transfer archiwum do maszyny kontrolnej
+        - name: Transfer kopii zapasowej do maszyny Ansible
           ansible.builtin.fetch:
             src: /tmp/adguard_backup_{{ ansible_date_time.date }}.tar.gz
-            dest: "{{ backup_dir }}/adguard_backup_{{ ansible_date_time.date }}.tar.gz"
+            dest: "{{ backup_path }}/adguard_backup_{{ ansible_date_time.date }}.tar.gz"
             flat: yes
 
-        - name: Usunięcie pliku tymczasowego z hosta docelowego
+        - name: Czyszczenie plików tymczasowych na serwerze
           ansible.builtin.file:
             path: /tmp/adguard_backup_{{ ansible_date_time.date }}.tar.gz
             state: absent
 
-        - name: Wyszukiwanie przestarzałych backupów
+        - name: Wyszukiwanie przestarzałych kopii zapasowych (starszych niż 7 dni)
           ansible.builtin.find:
-            paths: "{{ backup_dir }}"
+            paths: "{{ backup_path }}"
             patterns: "adguard_backup_*.tar.gz"
             age: 7d
           register: old_backups
           delegate_to: localhost
           become: no
 
-        - name: Usuwanie przestarzałych plików backup
+        - name: Usuwanie przestarzałych kopii
           ansible.builtin.file:
             path: "{{ item.path }}"
             state: absent
@@ -70,26 +84,28 @@
           delegate_to: localhost
           become: no
 
-        - name: Informacja o zakończeniu procesu
+        - name: Weryfikacja rozmiaru utworzonej kopii
+          ansible.builtin.stat:
+            path: "{{ backup_path }}/adguard_backup_{{ ansible_date_time.date }}.tar.gz"
+          register: backup_stat
+          delegate_to: localhost
+          become: no
+
+        - name: Raport z wykonania kopii zapasowej
           ansible.builtin.debug:
             msg:
               - "Kopia zapasowa AdGuard Home zakończona pomyślnie"
-              - "Lokalizacja: {{ backup_dir }}/adguard_backup_{{ ansible_date_time.date }}.tar.gz"
-              - "Serwer: {{ inventory_hostname }}"
+              - "Lokalizacja na Ansible_Dziecielski: {{ backup_path }}/adguard_backup_{{ ansible_date_time.date }}.tar.gz"
+              - "Rozmiar: {{ (backup_stat.stat.size / 1024 / 1024) | round(2) }} MB"
 
       rescue:
-        - name: Przywrócenie usługi w przypadku błędu
+        - name: Przywrócenie działania serwisu po błędzie
           ansible.builtin.systemd:
-            name: AdGuardHome
+            name: "{{ service_name }}"
             state: started
           ignore_errors: yes
 
-        - name: Zapisanie statusu błędu
-          ansible.builtin.set_fact:
-            backup_failed: true
-            backup_error_msg: "{{ ansible_failed_result.msg | default('Nieznany błąd') }}"
-
-        - name: Powiadomienie Discord o błędzie
+        - name: Powiadomienie o błędzie przez Discord
           community.general.discord:
             webhook_id: "{{ discord_webhook_id }}"
             webhook_token: "{{ discord_webhook_token }}"
@@ -103,62 +119,12 @@
                   - name: "Data"
                     value: "{{ ansible_date_time.iso8601 }}"
                   - name: "Błąd"
-                    value: "{{ backup_error_msg | default('Nieznany błąd') }}"
+                    value: "{{ ansible_failed_result.msg | default('Nieznany błąd') }}"
                 timestamp: "{{ ansible_date_time.iso8601 }}"
           delegate_to: localhost
           become: no
-          ignore_errors: yes
-          when:
-            - (discord_webhook_id | default('') | length) > 0
-            - (discord_webhook_token | default('') | length) > 0
+          when: discord_webhook_id != "" and discord_webhook_token != ""
 
         - name: Zakończenie z błędem
-          ansible.builtin.debug:
-            msg: "Backup miał błąd, ale job ma zostać oznaczony jako SUCCESS (zgodnie z wymaganiem)."
-
-      always:
-        - name: Stat pliku backup
-          ansible.builtin.stat:
-            path: "{{ backup_dir }}/adguard_backup_{{ ansible_date_time.date }}.tar.gz"
-          register: backup_stat
-          delegate_to: localhost
-          become: no
-          ignore_errors: yes
-
-        - name: Uruchom AdGuard
-          ansible.builtin.systemd:
-            name: AdGuardHome
-            state: started
-          ignore_errors: yes
-
-        - name: Powiadomienie Discord o sukcesie
-          community.general.discord:
-            webhook_id: "{{ discord_webhook_id }}"
-            webhook_token: "{{ discord_webhook_token }}"
-            embeds:
-              - title: "✅ Backup AdGuard Home - SUKCES"
-                description: "Kopia zapasowa zakończona pomyślnie"
-                color: 3066993
-                fields:
-                  - name: "Serwer"
-                    value: "{{ inventory_hostname }}"
-                  - name: "Data"
-                    value: "{{ ansible_date_time.iso8601 }}"
-                  - name: "Plik"
-                    value: "{{ backup_dir }}/adguard_backup_{{ ansible_date_time.date }}.tar.gz"
-                  - name: "Rozmiar"
-                    value: >-
-                      {{
-                        (
-                          (backup_stat.stat.size / 1024 / 1024) | round(2) ~ ' MB'
-                        )
-                        if (backup_stat is defined and backup_stat.stat is defined and backup_stat.stat.size is defined)
-                        else 'n/a'
-                      }}
-                timestamp: "{{ ansible_date_time.iso8601 }}"
-          delegate_to: localhost
-          become: no
-          ignore_errors: yes
-          when:
-            - (discord_webhook_id | default('') | length) > 0
-            - (discord_webhook_token | default('') | length) > 0
+          ansible.builtin.fail:
+            msg: "Kopia zapasowa zakończyła się błędem"
