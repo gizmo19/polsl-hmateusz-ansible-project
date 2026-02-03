@@ -37,7 +37,7 @@
             webhook_token: "{{ discord_webhook_token }}"
             embeds:
               - title: "⚠️ BŁĄD AKTUALIZACJI SYSTEMU"
-                description: "Aktualizacja systemu zakończyła się błędem"
+                description: "Aktualizacja systemu zakończyła się błędem na {{ inventory_hostname }}"
                 color: 15158332
                 fields:
                   - name: "Serwer"
@@ -49,7 +49,8 @@
                 timestamp: "{{ ansible_date_time.iso8601 }}"
           delegate_to: localhost
           become: no
-          when: discord_webhook_id != "" and discord_webhook_token != ""
+          ignore_errors: yes
+          when: discord_webhook_id is defined and discord_webhook_token is defined
 
         - name: Zakończenie z błędem
           ansible.builtin.fail:
