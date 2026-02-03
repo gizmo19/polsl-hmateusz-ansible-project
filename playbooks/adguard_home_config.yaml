@@ -1,6 +1,7 @@
 ---
 - name: Instalacja i konfiguracja AdGuard Home
   hosts: agh
+  become: true
   vars:
     adguard_install_dir: /adguardhome
     vg_name: adg_vg
