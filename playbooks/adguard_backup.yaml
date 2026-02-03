@@ -160,6 +160,5 @@
           become: no
           ignore_errors: yes
           when:
-            - not backup_failed
             - (discord_webhook_id | default('') | length) > 0
             - (discord_webhook_token | default('') | length) > 0
