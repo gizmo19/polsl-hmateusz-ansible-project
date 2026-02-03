@@ -11,14 +11,19 @@
 
     - name: Wykrywanie nazwy usługi AdGuard Home
       ansible.builtin.shell: |
-        systemctl list-units --all --type=service --no-legend | grep -i adguard | awk '{print $1}' | head -1
+        systemctl list-units --all --type=service --no-legend | grep -i adguard | awk '{print $1}' | head -1 | sed 's/\.service$//'
       register: adguard_service_name
       changed_when: false
       failed_when: false
+      become: yes
 
     - name: Ustawienie domyślnej nazwy usługi
       ansible.builtin.set_fact:
-        service_name: "{{ adguard_service_name.stdout | default('AdGuardHome') }}"
+        service_name: "{{ (adguard_service_name.stdout | trim | default('AdGuardHome')) }}"
+
+    - name: Debug wykrytej nazwy usługi
+      ansible.builtin.debug:
+        msg: "Wykryta nazwa usługi: '{{ service_name }}'"
 
     - name: Główny blok backup z obsługą wyjątków
       block:
