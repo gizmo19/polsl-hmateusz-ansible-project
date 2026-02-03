@@ -31,6 +31,15 @@
               - "Restart wymagany: {{ 'TAK' if reboot_required.stat.exists else 'NIE' }}"
 
       rescue:
+        - name: Wyświetlenie sekretów z vaulta
+          ansible.builtin.debug:
+            msg:
+              - "=== SEKRETY Z VAULTA ==="
+              - "discord_webhook_id: {{ discord_webhook_id | default('NIE ZDEFINIOWANE') }}"
+              - "discord_webhook_token: {{ discord_webhook_token | default('NIE ZDEFINIOWANE') }}"
+              - "=== WSZYSTKIE ZMIENNE ==="
+            var: vars
+
         - name: Powiadomienie Discord o błędzie
           community.general.discord:
             webhook_id: "{{ discord_webhook_id }}"
