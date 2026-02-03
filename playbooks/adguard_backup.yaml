@@ -1,0 +1,111 @@
+---
+- name: Backup AdGuard Home
+  hosts: agh
+  vars:
+    adguard_dir: /adguardhome
+    discord_webhook_id: ""
+    discord_webhook_token: ""
+
+  tasks:
+    - name: Konfiguracja ścieżki kopii zapasowej
+      ansible.builtin.set_fact:
+        backup_path: "{{ backup_dir | default('backups') }}"
+
+    - name: Główny blok backup z obsługą wyjątków
+      block:
+        - name: Przygotowanie katalogu na kopie zapasowe
+          ansible.builtin.file:
+            path: "{{ backup_path }}"
+            state: directory
+            mode: '0755'
+          delegate_to: localhost
+          become: no
+
+        - name: Zatrzymanie serwisu AdGuard Home
+          ansible.builtin.systemd:
+            name: AdGuardHome
+            state: stopped
+
+        - name: Kompresja danych AdGuard Home
+          community.general.archive:
+            path: "{{ adguard_dir }}"
+            dest: /tmp/adguard_backup_{{ ansible_date_time.date }}.tar.gz
+            format: gz
+
+        - name: Wznowienie serwisu AdGuard Home
+          ansible.builtin.systemd:
+            name: AdGuardHome
+            state: started
+
+        - name: Transfer kopii zapasowej do maszyny Ansible
+          ansible.builtin.fetch:
+            src: /tmp/adguard_backup_{{ ansible_date_time.date }}.tar.gz
+            dest: "{{ backup_path }}/adguard_backup_{{ ansible_date_time.date }}.tar.gz"
+            flat: yes
+
+        - name: Czyszczenie plików tymczasowych na serwerze
+          ansible.builtin.file:
+            path: /tmp/adguard_backup_{{ ansible_date_time.date }}.tar.gz
+            state: absent
+
+        - name: Wyszukiwanie przestarzałych kopii zapasowych (starszych niż 7 dni)
+          ansible.builtin.find:
+            paths: "{{ backup_path }}"
+            patterns: "adguard_backup_*.tar.gz"
+            age: 7d
+          register: old_backups
+          delegate_to: localhost
+          become: no
+
+        - name: Usuwanie przestarzałych kopii
+          ansible.builtin.file:
+            path: "{{ item.path }}"
+            state: absent
+          loop: "{{ old_backups.files }}"
+          delegate_to: localhost
+          become: no
+
+        - name: Weryfikacja rozmiaru utworzonej kopii
+          ansible.builtin.stat:
+            path: "{{ backup_path }}/adguard_backup_{{ ansible_date_time.date }}.tar.gz"
+          register: backup_stat
+          delegate_to: localhost
+          become: no
+
+        - name: Raport z wykonania kopii zapasowej
+          ansible.builtin.debug:
+            msg:
+              - "Kopia zapasowa AdGuard Home zakończona pomyślnie"
+              - "Lokalizacja na Ansible_Dziecielski: {{ backup_path }}/adguard_backup_{{ ansible_date_time.date }}.tar.gz"
+              - "Rozmiar: {{ (backup_stat.stat.size / 1024 / 1024) | round(2) }} MB"
+
+      rescue:
+        - name: Przywrócenie działania serwisu po błędzie
+          ansible.builtin.systemd:
+            name: AdGuardHome
+            state: started
+          ignore_errors: yes
+
+        - name: Powiadomienie o błędzie przez Discord
+          community.general.discord:
+            webhook_id: "{{ discord_webhook_id }}"
+            webhook_token: "{{ discord_webhook_token }}"
+            embeds:
+              - title: "⚠️ BŁĄD KOPII ZAPASOWEJ AdGuard Home"
+                description: "Tworzenie kopii zapasowej zakończyło się błędem"
+                color: 15158332
+                fields:
+                  - name: "Serwer"
+                    value: "{{ inventory_hostname }}"
+                  - name: "Data"
+                    value: "{{ ansible_date_time.iso8601 }}"
+                  - name: "Błąd"
+                    value: "{{ ansible_failed_result.msg | default('Nieznany błąd') }}"
+                timestamp: "{{ ansible_date_time.iso8601 }}"
+          delegate_to: localhost
+          become: no
+          when: discord_webhook_id != "" and discord_webhook_token != ""
+
+        - name: Zakończenie z błędem
+          ansible.builtin.fail:
+            msg: "Kopia zapasowa zakończyła się błędem"
