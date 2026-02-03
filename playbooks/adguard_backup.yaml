@@ -1,10 +1,8 @@
 ---
 - name: Backup AdGuard Home
   hosts: agh
-  vars:
-    adguard_dir: /adguardhome
-    discord_webhook_id: ""
-    discord_webhook_token: ""
+  vars_files:
+    - vault.yaml
 
   tasks:
     - name: Konfiguracja ścieżki kopii zapasowej
