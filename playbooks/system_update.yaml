@@ -1,0 +1,56 @@
+---
+- name: Aktualizacja OS
+  hosts: linux
+  become: true
+  gather_facts: yes
+  vars_files:
+    - vault.yaml
+
+  tasks:
+    - name: Sekcja aktualizacji z obsługą błędów
+      block:
+        - name: Upgrade pakietów do najnowszej wersji
+          ansible.builtin.apt:
+            upgrade: safe
+            update_cache: yes
+            autoclean: yes
+            autoremove: yes
+          environment:
+            DEBIAN_FRONTEND: noninteractive
+          register: upgrade_result
+
+        - name: Weryfikacja potrzeby restartu
+          ansible.builtin.stat:
+            path: /var/run/reboot-required
+          register: reboot_required
+
+        - name: Podsumowanie operacji
+          ansible.builtin.debug:
+            msg:
+              - "Aktualizacja zakończona pomyślnie"
+              - "Restart wymagany: {{ 'TAK' if reboot_required.stat.exists else 'NIE' }}"
+
+      rescue:
+        - name: Powiadomienie Discord o błędzie
+          community.general.discord:
+            webhook_id: "{{ discord_webhook_id }}"
+            webhook_token: "{{ discord_webhook_token }}"
+            embeds:
+              - title: "⚠️ BŁĄD AKTUALIZACJI SYSTEMU"
+                description: "Aktualizacja systemu zakończyła się błędem"
+                color: 15158332
+                fields:
+                  - name: "Serwer"
+                    value: "{{ inventory_hostname }}"
+                  - name: "Data"
+                    value: "{{ ansible_date_time.iso8601 }}"
+                  - name: "Błąd"
+                    value: "{{ ansible_failed_result.msg | default('Nieznany błąd') }}"
+                timestamp: "{{ ansible_date_time.iso8601 }}"
+          delegate_to: localhost
+          become: no
+          when: discord_webhook_id != "" and discord_webhook_token != ""
+
+        - name: Zakończenie z błędem
+          ansible.builtin.fail:
+            msg: "Aktualizacja zakończyła się błędem"
