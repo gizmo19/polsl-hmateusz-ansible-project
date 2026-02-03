@@ -39,7 +39,7 @@
           ansible.builtin.systemd:
             name: "{{ service_name }}"
             state: stopped
-            force_stop: yes
+            force: yes
             daemon_reload: yes
           async: 60
           poll: 5
