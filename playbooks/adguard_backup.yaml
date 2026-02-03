@@ -1,6 +1,7 @@
 ---
 - name: Backup AdGuard Home
   hosts: agh
+  become: true
   vars_files:
     - vault.yaml
 
