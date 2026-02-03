@@ -10,7 +10,7 @@
     - name: Sekcja aktualizacji z obsługą błędów
       block:
         - name: Upgrade pakietów do najnowszej wersji
-          ansible.builtin.apt:
+          ansible.builtin.aptt:
             upgrade: safe
             update_cache: yes
             autoclean: yes
@@ -37,7 +37,7 @@
             webhook_token: "{{ discord_webhook_token }}"
             embeds:
               - title: "⚠️ BŁĄD AKTUALIZACJI SYSTEMU"
-                description: "Aktualizacja systemu zakończyła się błędem na {{ inventory_hostname }}"
+                description: "Aktualizacja systemu zakończyła się błędem"
                 color: 15158332
                 fields:
                   - name: "Serwer"
@@ -49,8 +49,7 @@
                 timestamp: "{{ ansible_date_time.iso8601 }}"
           delegate_to: localhost
           become: no
-          ignore_errors: yes
-          when: discord_webhook_id is defined and discord_webhook_token is defined
+          when: discord_webhook_id != "" and discord_webhook_token != ""
 
         - name: Zakończenie z błędem
           ansible.builtin.fail:
