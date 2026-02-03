@@ -29,7 +29,7 @@
             webhook_id: "{{ discord_webhook_id }}"
             webhook_token: "{{ discord_webhook_token }}"
             username: "Semaphore"
-            content: "✅ **SUKCES** - Aktualizacja systemu **{{ ansible_hostname }}** ({{ ansible_default_ipv4.address }}) zakończona pomyślnie!\n\n📦 Zmienione pakiety: {{ 'TAK' if upgradeapt.changed else 'NIE (system aktualny)' }}\n🕐 Data: {{ ansible_date_time.date }} {{ ansible_date_time.time }}"
+            content: 'Aktualizacja systemu udana'
           delegate_to: localhost
           become: no
 
