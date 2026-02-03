@@ -10,7 +10,7 @@
     - name: Sekcja aktualizacji z obsługą błędów
       block:
         - name: Upgrade pakietów do najnowszej wersji
-          ansible.builtin.aptt:
+          ansible.builtin.apt:
             upgrade: safe
             update_cache: yes
             autoclean: yes
@@ -23,6 +23,15 @@
           ansible.builtin.stat:
             path: /var/run/reboot-required
           register: reboot_required
+
+        - name: Powiadomienie Discord - SUKCES
+          community.general.discord:
+            webhook_id: "{{ discord_webhook_id }}"
+            webhook_token: "{{ discord_webhook_token }}"
+            username: "Semaphore"
+            content: "✅ **SUKCES** - Aktualizacja systemu **{{ ansible_hostname }}** ({{ ansible_default_ipv4.address }}) zakończona pomyślnie!\n\n📦 Zmienione pakiety: {{ 'TAK' if upgradeapt.changed else 'NIE (system aktualny)' }}\n🕐 Data: {{ ansible_date_time.date }} {{ ansible_date_time.time }}"
+          delegate_to: localhost
+          become: no
 
         - name: Podsumowanie operacji
           ansible.builtin.debug:
